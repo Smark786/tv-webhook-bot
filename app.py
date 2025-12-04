@@ -79,6 +79,7 @@ def webhook():
         # ==========================================================
         # 1. ===== ENTRY ORDER (LIMIT Order) ========================
         # ==========================================================
+        # LIMIT order ke liye sirf 'price' field ki zaroorat hai. 'triggerPrice' aur 'amoTime' hata diye gaye hain.
         entry_payload = {
             "dhanClientId":      DHAN_CLIENT_ID,
             "correlationId":     cid + "-ENTRY",
@@ -90,10 +91,8 @@ def webhook():
             "securityId":        security_id,
             "quantity":          qty,
             "disclosedQuantity": 0,
-            "price":             entry, # LIMIT order ke liye price mandatory hai
-            # "triggerPrice": 0, <--- FIX: Ye field remove kar diya hai
+            "price":             entry, # Required for LIMIT
             "afterMarketOrder":  False,
-            "amoTime": ""
         }
         place_dhan_order(entry_payload)
 
@@ -101,6 +100,7 @@ def webhook():
         # 2. ===== SL ORDER (STOP_LOSS_MARKET Order) ===============
         # ==========================================================
         sl_side = "SELL" if side == "BUY" else "BUY"
+        # STOP_LOSS_MARKET order ke liye sirf 'triggerPrice' ki zaroorat hai. 'price' aur 'amoTime' hata diye gaye hain.
 
         sl_payload = {
             "dhanClientId":      DHAN_CLIENT_ID,
@@ -113,10 +113,8 @@ def webhook():
             "securityId":        security_id,
             "quantity":          qty,
             "disclosedQuantity": 0,
-            # "price": 0, <--- FIX: Ye field remove kar diya hai
-            "triggerPrice":      sl, # SL-M order ke liye triggerPrice mandatory hai
+            "triggerPrice":      sl, # Required for STOP_LOSS_MARKET
             "afterMarketOrder":  False,
-            "amoTime": ""
         }
         place_dhan_order(sl_payload)
 
@@ -125,6 +123,7 @@ def webhook():
         # ==========================================================
         if target > 0:
             tgt_side = "SELL" if side == "BUY" else "BUY"
+            # LIMIT order ke liye sirf 'price' field ki zaroorat hai. 'triggerPrice' aur 'amoTime' hata diye gaye hain.
             tgt_payload = {
                 "dhanClientId":      DHAN_CLIENT_ID,
                 "correlationId":     cid + "-TARGET",
@@ -136,10 +135,8 @@ def webhook():
                 "securityId":        security_id,
                 "quantity":          qty,
                 "disclosedQuantity": 0,
-                "price":             target, # LIMIT order ke liye price mandatory hai
-                # "triggerPrice": 0, <--- FIX: Ye field remove kar diya hai
+                "price":             target, # Required for LIMIT
                 "afterMarketOrder":  False,
-                "amoTime": ""
             }
             place_dhan_order(tgt_payload)
 
