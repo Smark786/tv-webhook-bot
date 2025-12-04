@@ -20,10 +20,23 @@ def place_dhan_order(payload):
         "Content-Type": "application/json",
         "access-token": DHAN_ACCESS_TOKEN
     }
-    print("➡️ Sending order to Dhan:", payload)
-    resp = requests.post(DHAN_ORDERS_URL, json=payload, headers=headers)
-    print("⬅️ Dhan response:", resp.status_code, resp.text)
-    return resp.status_code, resp.text
+
+    # Extra logging taaki hame 100% pata chale Dhan call hui ya nahi
+    print("➡️ CALLING DHAN API WITH PAYLOAD:")
+    print(payload)
+
+    try:
+        resp = requests.post(
+            DHAN_ORDERS_URL,
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        print("⬅️ DHAN RESPONSE:", resp.status_code, resp.text)
+        return resp.status_code, resp.text
+    except Exception as e:
+        print("❌ DHAN EXCEPTION:", repr(e))
+        return None, str(e)
 
 
 # ==================== WEBHOOK ENDPOINT ====================
@@ -31,7 +44,7 @@ def place_dhan_order(payload):
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.get_json(force=True, silent=True)
-    print("🚨 Alert received:", data)
+    print("🚨 Alert mila:", data)
 
     # Agar sirf ping / keep-alive ho to ignore kar do
     if data is None:
@@ -67,6 +80,7 @@ def webhook():
     orders_placed = []
 
     # ========== 1) ENTRY LIMIT ORDER ==========
+    print("📌 Making ENTRY order")
     entry_payload = {
         "dhanClientId":      DHAN_CLIENT_ID,
         "correlationId":     corr_id + "-ENTRY",
@@ -86,13 +100,13 @@ def webhook():
         "boStopLossValue":   0
     }
 
-    # ⚠️ REAL TRADE CALL: production me ye chalu rahega
     status, text = place_dhan_order(entry_payload)
     orders_placed.append({"leg": "ENTRY", "status": status, "resp": text})
 
     # ========== 2) STOP LOSS MARKET ORDER ==========
     # Long: BUY entry → SL = SELL STOP_LOSS_MARKET
     # Short: SELL entry → SL = BUY STOP_LOSS_MARKET
+    print("📌 Making SL order")
     sl_side = "SELL" if side == "BUY" else "BUY"
 
     sl_payload = {
@@ -119,6 +133,7 @@ def webhook():
 
     # ========== 3) OPTIONAL TARGET LIMIT ORDER ==========
     if target_price > 0:
+        print("📌 Making TARGET order")
         tgt_side = "SELL" if side == "BUY" else "BUY"
         tgt_payload = {
             "dhanClientId":      DHAN_CLIENT_ID,
