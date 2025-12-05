@@ -1,16 +1,13 @@
 from flask import Flask, request, jsonify
 from SmartApi.smartConnect import SmartConnect
-import pyotp
-import time
+import pyotp, time
 
 app = Flask(__name__)
 
-# ============ ANGEL CONFIG (FILL ONLY THIS) ============
 API_KEY     = "DNKHyTmF"
 CLIENT_ID   = "S354855"
 PASSWORD    = "2786"
 TOTP_SECRET = "YH4RJAHRVCNMHEQHFUU4VLY6RQ"
-# ======================================================
 
 smart = None
 last_login = 0
@@ -18,21 +15,29 @@ last_login = 0
 
 def angel_login():
     global smart, last_login
-
-    # 55 min session valid
     if smart and (time.time() - last_login) < 3300:
         return
 
-    print("🔐 Logging in Angel One...")
+    print("🔐 Angel login...")
     smart = SmartConnect(api_key=API_KEY)
     totp = pyotp.TOTP(TOTP_SECRET).now()
-
     data = smart.generateSession(CLIENT_ID, PASSWORD, totp)
+
     if not data.get("status"):
         raise Exception("Angel login failed")
 
     last_login = time.time()
-    print("✅ Fresh Angel login done")
+    print("✅ Login OK")
+
+
+def safe_place_order(order):
+    try:
+        resp = smart.placeOrder(order)
+        print("✅ Angel raw response:", resp)
+        return resp
+    except Exception as e:
+        print("❌ Angel API ERROR (ignored):", str(e))
+        return None
 
 
 @app.route("/webhook", methods=["POST"])
@@ -41,24 +46,20 @@ def webhook():
     print("🚨 ALERT RECEIVED:", data)
 
     try:
-        action = data["action"].upper()
-        symbol = data["symbol"]
-        token  = data["token"]
-        qty    = int(data["qty"])
-        entry  = float(data["entry"])
-        sl     = float(data["slPrice"])
-    except Exception:
-        return jsonify({"error": "Invalid payload"}), 400
-
-    try:
         angel_login()
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+    symbol = data["symbol"]
+    token  = data["token"]
+    qty    = int(data["qty"])
+    entry  = float(data["entry"])
+    sl     = float(data["slPrice"])
+    action = data["action"].upper()
+
     side_entry = "BUY" if action == "BUY" else "SELL"
     side_sl    = "SELL" if side_entry == "BUY" else "BUY"
 
-    # ========= ENTRY =========
     entry_order = {
         "variety": "NORMAL",
         "tradingsymbol": symbol,
@@ -73,10 +74,8 @@ def webhook():
     }
 
     print("📨 ENTRY ORDER:", entry_order)
-    entry_resp = smart.placeOrder(entry_order)
-    print("✅ ENTRY RESPONSE:", entry_resp)
+    entry_resp = safe_place_order(entry_order)
 
-    # ========= SL =========
     sl_order = {
         "variety": "NORMAL",
         "tradingsymbol": symbol,
@@ -91,19 +90,18 @@ def webhook():
     }
 
     print("📨 SL ORDER:", sl_order)
-    sl_resp = smart.placeOrder(sl_order)
-    print("✅ SL RESPONSE:", sl_resp)
+    sl_resp = safe_place_order(sl_order)
 
     return jsonify({
-        "status": "ok",
-        "entry": entry_resp,
-        "sl": sl_resp
+        "status": "received",
+        "entry_response": entry_resp,
+        "sl_response": sl_resp
     })
 
 
 @app.route("/")
 def home():
-    return "Webhook running ✅"
+    return "✅ Angel Webhook Live"
 
 
 if __name__ == "__main__":
