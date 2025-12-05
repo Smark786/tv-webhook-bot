@@ -1,108 +1,119 @@
 from flask import Flask, request, jsonify
 from SmartApi.smartConnect import SmartConnect
-import pyotp, time
+import pyotp
+import time
 
 app = Flask(__name__)
 
-API_KEY     = "DNKHyTmF"
-CLIENT_ID   = "S354855"
-PASSWORD    = "2786"
-TOTP_SECRET = "YH4RJAHRVCNMHEQHFUU4VLY6RQ"
+# ================= ANGEL CONFIG =================
+API_KEY      = "DNKHyTmF"
+CLIENT_ID    = "S354855"
+PASSWORD     = "2786"
+TOTP_SECRET  = "YH4RJAHRVCNMHEQHFUU4VLY6RQ"   # Google Authenticator ka secret
 
 smart = None
-last_login = 0
+last_login_time = 0
+SESSION_TTL = 10 * 60    # 10 minutes
 
+# ------------------------------------------------
+def get_smart():
+    """Ensure SmartConnect login fresh hai."""
+    global smart, last_login_time
 
-def angel_login():
-    global smart, last_login
-    if smart and (time.time() - last_login) < 3300:
-        return
+    now = time.time()
+    if smart is not None and (now - last_login_time) < SESSION_TTL:
+        return smart
 
     print("🔐 Angel login...")
-    smart = SmartConnect(api_key=API_KEY)
     totp = pyotp.TOTP(TOTP_SECRET).now()
-    data = smart.generateSession(CLIENT_ID, PASSWORD, totp)
+    sc = SmartConnect(api_key=API_KEY)
+    data = sc.generateSession(CLIENT_ID, PASSWORD, totp)
+    print("✅ LOGIN RESPONSE:", data)
 
-    if not data.get("status"):
-        raise Exception("Angel login failed")
-
-    last_login = time.time()
-    print("✅ Login OK")
+    smart = sc
+    last_login_time = now
+    return smart
 
 
-def safe_place_order(order):
+def safe_place_order(order_payload, leg_name):
+    """Angel order place kare, error aaya to log kare."""
+    sc = get_smart()
     try:
-        resp = smart.placeOrder(order)
-        print("✅ Angel raw response:", resp)
+        print(f"📤 SENDING {leg_name} TO ANGEL:", order_payload)
+        resp = sc.placeOrder(order_payload)
+        print(f"✅ {leg_name} RESPONSE:", resp)
         return resp
     except Exception as e:
-        print("❌ Angel API ERROR (ignored):", str(e))
+        print(f"❌ ANGEL API ERROR in {leg_name}: {e}")
         return None
 
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    data = request.get_json()
-    print("🚨 ALERT RECEIVED:", data)
-
     try:
-        angel_login()
+        data = request.get_json(force=True, silent=False)
+        print("\n==============================")
+        print("🚨 ALERT RECEIVED:", data)
+
+        action  = data.get("action", "").upper()   # BUY / SELL
+        symbol  = data.get("symbol")               # e.g. ANANTRAJ-EQ
+        token   = data.get("token")                # e.g. 13620
+        qty     = int(data.get("qty", 0) or 0)
+        entry   = float(data.get("entry", 0) or 0)
+        sl      = float(data.get("slPrice", 0) or 0)
+
+        if not all([action, symbol, token]) or qty <= 0 or entry <= 0 or sl <= 0:
+            print("⚠️ INVALID PAYLOAD, ignoring.")
+            return jsonify({"status": "error", "msg": "invalid payload"}), 400
+
+        # ----- ENTRY ORDER -----
+        entry_order = {
+            "variety":        "NORMAL",
+            "tradingsymbol":  symbol,
+            "symboltoken":    token,
+            "transactiontype": action,        # BUY / SELL
+            "exchange":       "NSE",
+            "ordertype":      "LIMIT",
+            "producttype":    "CNC",
+            "duration":       "DAY",
+            "price":          entry,
+            "quantity":       qty
+        }
+
+        entry_resp = safe_place_order(entry_order, "ENTRY")
+
+        # ----- SL-M ORDER -----
+        sl_side = "SELL" if action == "BUY" else "BUY"
+        sl_order = {
+            "variety":        "NORMAL",
+            "tradingsymbol":  symbol,
+            "symboltoken":    token,
+            "transactiontype": sl_side,
+            "exchange":       "NSE",
+            "ordertype":      "STOPLOSS_MARKET",
+            "producttype":    "CNC",
+            "duration":       "DAY",
+            "triggerprice":   sl,
+            "quantity":       qty
+        }
+
+        sl_resp = safe_place_order(sl_order, "SL")
+
+        return jsonify({
+            "status": "ok",
+            "entry": entry_resp,
+            "sl": sl_resp
+        })
+
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-    symbol = data["symbol"]
-    token  = data["token"]
-    qty    = int(data["qty"])
-    entry  = float(data["entry"])
-    sl     = float(data["slPrice"])
-    action = data["action"].upper()
-
-    side_entry = "BUY" if action == "BUY" else "SELL"
-    side_sl    = "SELL" if side_entry == "BUY" else "BUY"
-
-    entry_order = {
-        "variety": "NORMAL",
-        "tradingsymbol": symbol,
-        "symboltoken": token,
-        "transactiontype": side_entry,
-        "exchange": "NSE",
-        "ordertype": "LIMIT",
-        "producttype": "CNC",
-        "duration": "DAY",
-        "price": entry,
-        "quantity": qty
-    }
-
-    print("📨 ENTRY ORDER:", entry_order)
-    entry_resp = safe_place_order(entry_order)
-
-    sl_order = {
-        "variety": "NORMAL",
-        "tradingsymbol": symbol,
-        "symboltoken": token,
-        "transactiontype": side_sl,
-        "exchange": "NSE",
-        "ordertype": "STOPLOSS_MARKET",
-        "producttype": "CNC",
-        "duration": "DAY",
-        "triggerprice": sl,
-        "quantity": qty
-    }
-
-    print("📨 SL ORDER:", sl_order)
-    sl_resp = safe_place_order(sl_order)
-
-    return jsonify({
-        "status": "received",
-        "entry_response": entry_resp,
-        "sl_response": sl_resp
-    })
+        print("🛑 UNHANDLED ERROR IN WEBHOOK:", e)
+        return jsonify({"status": "error", "msg": str(e)}), 500
 
 
 @app.route("/")
 def home():
-    return "✅ Angel Webhook Live"
+    return "Angel webhook server running ✅"
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(host="0.0.0.0", port=8000)
