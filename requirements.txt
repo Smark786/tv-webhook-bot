@@ -1,7 +1,5 @@
 flask
-gunicorn
+requests
 smartapi-python
 pyotp
-logzero
-websocket-client
-pycryptodome
+gunicorn
