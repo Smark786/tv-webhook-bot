@@ -1,11 +1,11 @@
 from flask import Flask, request, jsonify
-from smartapi import SmartConnect
+from SmartApi import SmartConnect   # 👈 NOTE: Capital S, A
 import pyotp
 
 app = Flask(__name__)
 
 # ============ ANGEL ONE CREDENTIALS ============
-# 👇 Yahan sirf ye 4 cheeze apni dalni hain
+# 👇 Sirf in 4 lines me apni details daalni hain
 
 API_KEY   = "DNKHyTmF"
 CLIENT_ID = "S354855"
