@@ -9,7 +9,7 @@ app = Flask(__name__)
 
 API_KEY   = "DNKHyTmF"
 CLIENT_ID = "S354855"
-PASSWORD  = "ahmed786"
+PASSWORD  = "2786"
 TOTP_KEY  = "YH4RJAHRVCNMHEQHFUU4VLY6RQ"
 
 # ===============================================
