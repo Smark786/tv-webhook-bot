@@ -1,5 +1,6 @@
 flask
-requests
-smartapi-python
-pyotp
 gunicorn
+requests
+pyotp
+smartapi-python
+logzero
