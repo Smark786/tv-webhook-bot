@@ -28,35 +28,35 @@ last_login_time = 0  # seconds timestamp
 def load_scrip_master():
     """
     Angel ke OpenAPIScripMaster JSON se
-    saare NSE EQ symbols ka map banaata hai:
-    'ANANTRAJ' -> '13620'
+    saare symbols ka map banaata hai:
+    'ANANTRAJ-EQ' -> 'ANANTRAJ' -> token
     """
     global SYMBOL_TOKEN_MAP
     try:
         print("📥 Loading ScripMaster from Angel URL...")
-        resp = requests.get(SCRIP_MASTER_URL, timeout=20)
+        resp = requests.get(SCRIP_MASTER_URL, timeout=30)
         resp.raise_for_status()
         data = resp.json()
 
         tmp_map = {}
         count = 0
 
+        # Yahan hum koi filter nahi laga rahe,
+        # sirf symbol + token uthaa ke map bana rahe.
         for row in data:
-            # Typical keys: symbol, token, exch_seg, instrumenttype
-            exch = (row.get("exch_seg") or "").upper()
-            inst = (row.get("instrumenttype") or "").upper()
-            symbol_full = (row.get("symbol") or "").upper()
+            symbol_full = str(row.get("symbol", "")).upper()
             token = row.get("token")
 
-            # Sirf NSE cash stocks chahiye
-            if exch == "NSE" and inst == "EQ" and symbol_full and token:
-                # "ANANTRAJ-EQ" -> "ANANTRAJ"
-                base_symbol = symbol_full.split("-")[0]
-                tmp_map[base_symbol] = str(token)
-                count += 1
+            if not symbol_full or not token:
+                continue
+
+            # Example: "ANANTRAJ-EQ", "SBIN-EQ", "NIFTY23OCTFUT"
+            base_symbol = symbol_full.split("-")[0]  # "ANANTRAJ", "SBIN", "NIFTY23OCTFUT"
+            tmp_map[base_symbol] = str(token)
+            count += 1
 
         SYMBOL_TOKEN_MAP = tmp_map
-        print(f"✅ Loaded {count} NSE EQ symbols into SYMBOL_TOKEN_MAP")
+        print(f"✅ Loaded {count} symbols into SYMBOL_TOKEN_MAP")
 
     except Exception as e:
         print("❌ ERROR loading ScripMaster:", e)
@@ -124,6 +124,7 @@ def webhook():
     sl      = float(data.get("slPrice", 0) or 0)
 
     if not action or not symbol or qty <= 0 or entry <= 0 or sl <= 0:
+        print("❌ Invalid payload values")
         return jsonify({"error": "Missing/invalid fields"}), 400
 
     # --- Token from ScripMaster map ---
@@ -138,12 +139,13 @@ def webhook():
     try:
         ensure_angel_login()
     except Exception as e:
+        print("❌ Angel login failed:", e)
         return jsonify({"error": f"Angel login failed: {e}"}), 500
 
     # Common things
     side_entry = "BUY" if action == "BUY" else "SELL"
     side_sl    = "SELL" if side_entry == "BUY" else "BUY"
-    trading_symbol = f"{symbol}-EQ"  # ScripMaster style
+    trading_symbol = f"{symbol}-EQ"  # most cash stocks format
 
     entry_resp = None
     sl_resp = None
@@ -212,6 +214,6 @@ def home():
 
 
 if __name__ == "__main__":
-    # App start hote hi ScripMaster load kar lo
+    # Gunicorn ke bina local run karoge to yeh chalega
     load_scrip_master()
     app.run(host="0.0.0.0", port=8000)
