@@ -1,78 +1,70 @@
 from flask import Flask, request, jsonify
 from SmartApi import SmartConnect
-from SmartApi.smartExceptions import DataException
 import pyotp
 import time
 
 app = Flask(__name__)
 
-# ---------------- Angel Credentials ----------------
-API_KEY     = "DNKHyTmF"
-CLIENT_CODE = "S354855"   # jaise: X12345
-PASSWORD    = "2786"    # MPIN nahi, login password
-TOTP_KEY    = "YH4RJAHRVCNMHEQHFUU4VLY6RQ"  # Google Authenticator ka secret
+# ================== CONFIG FILL KARNA HAI ==================
 
-# ---------------- Symbol → Token Map ----------------
-# TradingView se tum jo "symbol" bhejoge woh yahan key hoga.
-# Naya stock => yaha ek line aur add kar dena.
+API_KEY     = "DNKHyTmF"
+CLIENT_CODE = "S354855"
+PASSWORD    = "2786"
+TOTP_KEY    = "YH4RJAHRVCNMHEQHFUU4VLY6RQ"
+
+# sirf yahan tokens add / edit karte rehna
 SYMBOL_TOKEN_MAP = {
     "ANANTRAJ": "13620",
     "SBIN": "3045",
-    # "HDFCBANK": "1333",  # example
+    # "CUPID": "TOKEN_YAHAN",
 }
 
-# ---------------------------------------------------
+# ===========================================================
 
 def angel_login():
-    """Har webhook pe fresh Angel login."""
+    """Har webhook pe fresh SmartAPI login."""
     smart = SmartConnect(api_key=API_KEY)
 
-    totp = pyotp.TOTP(TOTP_KEY).now()
-    print(f"[{time.strftime('%H:%M:%S')}] 🔐 TOTP generated:", totp)
+    totp_now = pyotp.TOTP(TOTP_KEY).now()
+    print(f"[{time.strftime('%H:%M:%S')}] 🔐 TOTP generated:", totp_now)
 
-    data = smart.generateSession(
-        CLIENT_CODE,
-        PASSWORD,
-        totp
-    )
-
+    data = smart.generateSession(CLIENT_CODE, PASSWORD, totp_now)
     if not data.get("status"):
-        print(f"[{time.strftime('%H:%M:%S')}] ❌ Angel Login Failed:", data)
-        raise Exception("Angel Login Failed")
+        print(f"[{time.strftime('%H:%M:%S')}] ❌ LOGIN FAILED:", data)
+        raise Exception("Angel login failed")
 
-    jwt = data["data"]["jwtToken"]
-    smart.setAccessToken(jwt)
+    smart.setAccessToken(data["data"]["jwtToken"])
     print(f"[{time.strftime('%H:%M:%S')}] ✅ Angel login done, token set")
     return smart
 
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
+    ts = time.strftime('%H:%M:%S')
     try:
         data = request.get_json(force=True)
-        print("\n" + "=" * 60)
-        print(f"[{time.strftime('%H:%M:%S')}] 🔔 ALERT RECEIVED:", data)
+        print(f"\n{ts} ===============================================")
+        print(f"{ts} 🔔 ALERT RECEIVED:", data)
 
-        # ---- basic parsing ----
-        action = data["action"].upper()          # BUY / SELL
-        symbol = data["symbol"].upper()          # e.g. ANANTRAJ
+        # -------- TradingView payload parse --------
+        action = data["action"].upper()
+        symbol = data["symbol"].upper()
         qty    = int(data["qty"])
-        entry  = float(data.get("entry", 0))
-        sl     = float(data.get("slPrice", 0))
+        entry  = float(data.get("entry", 0) or 0)
+        sl     = float(data.get("slPrice", 0) or 0)
 
         if symbol not in SYMBOL_TOKEN_MAP:
-            msg = f"Symbol {symbol} not mapped in SYMBOL_TOKEN_MAP"
-            print("❌", msg)
-            return jsonify({"error": msg}), 400
+            print(f"{ts} ❌ Symbol {symbol} NOT in SYMBOL_TOKEN_MAP")
+            return jsonify({"error": f"symbol {symbol} not mapped"}), 400
 
         token = SYMBOL_TOKEN_MAP[symbol]
-        print(f"[{time.strftime('%H:%M:%S')}] ✅ Symbol {symbol} → token {token}")
+        print(f"{ts} ✅ Symbol {symbol} → token {token}")
 
-        # ✅ har baar naya login
+        # -------- Login --------
         smart = angel_login()
 
         # -------- ENTRY ORDER --------
-        entry_params = {
+        entry_order_payload = {
             "variety":         "NORMAL",
             "tradingsymbol":   f"{symbol}-EQ",
             "symboltoken":     token,
@@ -84,28 +76,27 @@ def webhook():
             "price":           entry,
             "quantity":        qty,
         }
-
-        print(f"[{time.strftime('%H:%M:%S')}] 📤 ENTRY ORDER:", entry_params)
+        print(f"{ts} 🧾 ENTRY ORDER PAYLOAD:", entry_order_payload)
 
         try:
-            entry_order = smart.placeOrder(entry_params)
-        except DataException as e:
-            # yahi woh "Couldn't parse JSON..." waali error hai
-            print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Angel API ERROR in ENTRY (ignored):", e)
-            entry_order = None
+            entry_resp = smart.placeOrder(entry_order_payload)
+            print(f"{ts} 📩 RAW ENTRY RESPONSE:", entry_resp)
+        except Exception as e:
+            print(f"{ts} ❌ ENTRY API ERROR:", repr(e))
+            entry_resp = None
 
-        print(f"[{time.strftime('%H:%M:%S')}] ✅ ENTRY RESPONSE:", entry_order)
+        print(f"{ts} ✅ ENTRY RESPONSE:", entry_resp)
 
         # -------- SL ORDER (agar SL diya hai) --------
-        sl_order = None
+        sl_resp = None
         if sl > 0:
-            sl_action = "SELL" if action == "BUY" else "BUY"
+            sl_side = "SELL" if action == "BUY" else "BUY"
 
-            sl_params = {
+            sl_order_payload = {
                 "variety":         "NORMAL",
                 "tradingsymbol":   f"{symbol}-EQ",
                 "symboltoken":     token,
-                "transactiontype": sl_action,
+                "transactiontype": sl_side,
                 "exchange":        "NSE",
                 "ordertype":       "STOPLOSS_MARKET",
                 "producttype":     "CNC",
@@ -113,27 +104,27 @@ def webhook():
                 "triggerprice":    sl,
                 "quantity":        qty,
             }
-
-            print(f"[{time.strftime('%H:%M:%S')}] 📤 SL ORDER:", sl_params)
+            print(f"{ts} 🧾 SL ORDER PAYLOAD:", sl_order_payload)
 
             try:
-                sl_order = smart.placeOrder(sl_params)
-            except DataException as e:
-                print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Angel API ERROR in SL (ignored):", e)
-                sl_order = None
+                sl_resp = smart.placeOrder(sl_order_payload)
+                print(f"{ts} 📩 RAW SL RESPONSE:", sl_resp)
+            except Exception as e:
+                print(f"{ts} ❌ SL API ERROR:", repr(e))
+                sl_resp = None
 
-            print(f"[{time.strftime('%H:%M:%S')}] ✅ SL RESPONSE:", sl_order)
+            print(f"{ts} ✅ SL RESPONSE:", sl_resp)
         else:
-            print(f"[{time.strftime('%H:%M:%S')}] ⚠️ SL 0 hai, SL order skip kiya")
+            print(f"{ts} ⚠️ SL SKIPPED (slPrice <= 0)")
 
         return jsonify({
-            "status": "order_sent",
-            "entry":  entry_order,
-            "sl":     sl_order
+            "status": "sent_to_angel",
+            "entry": entry_resp,
+            "sl": sl_resp
         })
 
     except Exception as e:
-        print("❌ FATAL ERROR in webhook:", str(e))
+        print(f"{ts} 🛑 UNHANDLED ERROR IN WEBHOOK:", str(e))
         return jsonify({"error": str(e)}), 500
 
 
@@ -143,5 +134,4 @@ def home():
 
 
 if __name__ == "__main__":
-    # local run ke liye; Render pe gunicorn chalega
-    app.run(host="0.0.0.0", port=8000)
+    app.run(host="0.0.0.0", port=10000)
