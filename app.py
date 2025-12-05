@@ -8,38 +8,36 @@ app = Flask(__name__)
 
 # ================== ANGEL / SMARTAPI CONFIG ==================
 
-API_KEY      = "DNKHyTmF"
-CLIENT_CODE  = "S354855"   # jaise: "S123456"
-CLIENT_PIN   = "2786"    # jo app login me use karte ho
-TOTP_SECRET  = "YH4RJAHRVCNMHEQHFUU4VLY6RQ" # Google Authenticator ka secret
+# 👉 Yahan apne real details daalo
+API_KEY     = "DNKHyTmF"
+CLIENT_CODE = "S354855"     # jaise: "S123456"
+CLIENT_PIN  = "2786"       # jo app login PIN hai (6 digit)
+TOTP_SECRET = "YH4RJAHRVCNMHEQHFUU4VLY6RQ"   # Google Authenticator secret (A-Z,2-7)
 
-# Angel REST ORDER endpoint
+# Angel REST order URL
 ANGEL_ORDER_URL = "https://apiconnect.angelbroking.com/rest/secure/angelbroking/order/v1/placeOrder"
 
-# Global login variables
-smart      = None
-JWT_TOKEN  = None
+# Global login vars
+smart = None
+JWT_TOKEN = None
 
 
-# ================== LOGIN HELPER ==================
+# ================== LOGIN HELPERS ==================
 
 def angel_login():
     """
-    SmartAPI login + JWT token generate.
-    Har baar naya TOTP banega.
+    SmartAPI par login karke JWT token set karta hai.
     """
     global smart, JWT_TOKEN
 
     print(f"[{time.strftime('%H:%M:%S')}] 🔐 Logging in to Angel SmartAPI...")
 
-    # SmartAPI client
     smart = SmartConnect(api_key=API_KEY)
 
     # TOTP generate from secret
     totp = pyotp.TOTP(TOTP_SECRET).now()
-    print(f"[{time.strftime('%H:%M:%S')}] TOTP generated.")
+    print(f"[{time.strftime('%H:%M:%S')}] TOTP generated:", totp)
 
-    # generateSession with clientcode + PIN/password + totp
     data = smart.generateSession(CLIENT_CODE, CLIENT_PIN, totp)
     print(f"[{time.strftime('%H:%M:%S')}] LOGIN RESPONSE:", data)
 
@@ -52,20 +50,20 @@ def angel_login():
 
 def ensure_login():
     """
-    Agar JWT_TOKEN missing hai to login kar lo.
-    (Simple guard – chaho to expiry check bhi laga sakte ho.)
+    JWT token missing ho to login call kare.
+    (Simple guard – expiry check nahi lagaya abhi.)
     """
     global JWT_TOKEN
     if JWT_TOKEN is None:
         angel_login()
 
 
-# ================== DIRECT REST ORDER HELPER ==================
+# ================== DIRECT REST ORDER CALL ==================
 
 def place_angel_order(order_payload):
     """
-    Angel REST placeOrder ko direct call karta hai.
-    SmartAPI SDK use nahi kar rahe, sirf requests.post.
+    Angel REST placeOrder ko direct hit karta hai.
+    SmartAPI SDK ka placeOrder use nahi kar rahe.
     """
     ensure_login()
 
@@ -76,7 +74,7 @@ def place_angel_order(order_payload):
         "X-SourceID": "WEB",
         "X-ClientLocalIP": "127.0.0.1",
         "X-ClientPublicIP": "127.0.0.1",
-        "X-MACAddress": "AA:BB:CC:DD:EE:FF",  # dummy, allowed
+        "X-MACAddress": "AA:BB:CC:DD:EE:FF",  # dummy
         "X-PrivateKey": API_KEY,
         "Authorization": f"Bearer {JWT_TOKEN}",
     }
@@ -98,22 +96,31 @@ def place_angel_order(order_payload):
         return 500, str(e)
 
 
-# ================== WEBHOOK ==================
+# ================== WEBHOOK ENDPOINT ==================
 
-@app.route("/webhook", methods=["POST"])
+@app.route("/webhook", methods=["GET", "POST"])
 def webhook():
     """
-    TradingView se alert receive karega:
+    TradingView se alerts receive karega.
+
+    TradingView message example:
+
     {
       "action": "BUY",
       "symbol": "SBIN",
-      "token":  "3045",
-      "qty":    1,
-      "entry":  620,
-      "slPrice":610
+      "token": "3045",
+      "qty": 1,
+      "entry": 620,
+      "slPrice": 610
     }
     """
 
+    # ----- GET request (browser / uptime robot) -----
+    if request.method == "GET":
+        print(f"[{time.strftime('%H:%M:%S')}] 🌐 Webhook GET ping mila")
+        return "Webhook endpoint alive. Use POST from TradingView.", 200
+
+    # ----- POST request (TradingView) -----
     try:
         data = request.get_json(force=True)
     except Exception as e:
@@ -132,11 +139,12 @@ def webhook():
     entry  = float(data.get("entry", 0) or 0)
     sl     = float(data.get("slPrice", 0) or 0)
 
+    # Validation
     if not all([side in ("BUY", "SELL"), symbol, token]) or qty <= 0 or entry <= 0 or sl <= 0:
         print(f"[{time.strftime('%H:%M:%S')}] ❌ INVALID PAYLOAD, ignoring.")
         return jsonify({"status": "error", "msg": "invalid payload"}), 400
 
-    # Angel format tradingsymbol: "SBIN-EQ"
+    # Angel tradingsymbol: "SBIN-EQ"
     trading_symbol = symbol + "-EQ"
 
     print(f"[{time.strftime('%H:%M:%S')}] 🎯 ENTRY: {trading_symbol} {entry} x {qty} CNC")
@@ -190,7 +198,6 @@ def home():
     return "Angel One webhook server running ✅"
 
 
-# Render / gunicorn import pe bhi login ho sake, isliye yahan nahi
 if __name__ == "__main__":
     # Local run ke liye – Render pe gunicorn handle karega
     angel_login()
