@@ -5,33 +5,32 @@ import pyotp
 app = Flask(__name__)
 
 # ============ ANGEL ONE CREDENTIALS ============
+# 👇 Yahan sirf ye 4 cheeze apni dalni hain
 
-API_KEY   = "DNKHyTmF"        # 🔹 SmartAPI se mila API key
-CLIENT_ID = "S354855"      # 🔹 Angel ka client id (login id)
-PASSWORD  = "ahmed786"       # 🔹 Trading password
-TOTP_KEY  = "YH4RJAHRVCNMHEQHFUU4VLY6RQ"    # 🔹 Google Authenticator ka secret (base32)
+API_KEY   = "DNKHyTmF"
+CLIENT_ID = "S354855"
+PASSWORD  = "ahmed786"
+TOTP_KEY  = "YH4RJAHRVCNMHEQHFUU4VLY6RQ"
 
-# ============ LOGIN ============
+# ===============================================
 
 def angel_login():
-    """Angel One SmartAPI login & session create."""
+    """Angel One SmartAPI login & session create karta hai."""
     global obj
     obj = SmartConnect(api_key=API_KEY)
 
-    # TOTP generate
     totp = pyotp.TOTP(TOTP_KEY).now()
-    print("🔐 Generating session with TOTP:", totp)
+    print("🔐 TOTP:", totp)
 
     login_data = obj.generateSession(CLIENT_ID, PASSWORD, totp)
-    print("✅ Login success:", login_data)
-
+    print("✅ LOGIN:", login_data)
     return login_data
 
-# Pehle se login karlo jab app start ho
+# App start hote hi login
 obj = None
 angel_login()
 
-# ============ WEBHOOK ============
+# ============ WEBHOOK ROUTE ============
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -46,42 +45,41 @@ def webhook():
         entry    = float(data["entry"])
         sl_price = float(data["slPrice"])
 
-        # CNC / INTRADAY choose karne ka option (default CNC)
+        # productType (default CNC / delivery)
         product_raw = data.get("productType", "CNC").upper()
         if product_raw in ("INTRA", "INTRADAY"):
             product_type = "INTRADAY"
         else:
-            product_type = "CNC"   # default: CASH / DELIVERY
+            product_type = "CNC"
 
-        direction = "BUY" if action == "BUY" else "SELL"
+        side = "BUY" if action == "BUY" else "SELL"
 
-        # ---------- ENTRY ORDER ----------
-        print("📌 Placing ENTRY order:", symbol, entry, qty, product_type)
+        # --------- ENTRY ORDER (LIMIT) ----------
+        print("📌 ENTRY:", symbol, entry, qty, product_type)
 
         entry_order = {
             "variety": "NORMAL",
             "tradingsymbol": symbol,
             "symboltoken": token,
-            "transactiontype": direction,         # BUY / SELL
+            "transactiontype": side,
             "exchange": "NSE",
             "ordertype": "LIMIT",
-            "producttype": product_type,          # CNC / INTRADAY
+            "producttype": product_type,
             "duration": "DAY",
             "price": entry,
             "quantity": qty
         }
-
         entry_resp = obj.placeOrder(entry_order)
-        print("ENTRY RESPONSE:", entry_resp)
+        print("ENTRY RESP:", entry_resp)
 
-        # ---------- SL ORDER (STOPLOSS MARKET) ----------
-        print("📌 Placing SL-M order:", sl_price)
+        # --------- SL-M ORDER ----------
+        print("📌 SL-M:", sl_price)
 
         sl_order = {
             "variety": "NORMAL",
             "tradingsymbol": symbol,
             "symboltoken": token,
-            "transactiontype": "SELL" if direction == "BUY" else "BUY",
+            "transactiontype": "SELL" if side == "BUY" else "BUY",
             "exchange": "NSE",
             "ordertype": "STOPLOSS_MARKET",
             "producttype": product_type,
@@ -89,9 +87,8 @@ def webhook():
             "triggerprice": sl_price,
             "quantity": qty
         }
-
         sl_resp = obj.placeOrder(sl_order)
-        print("SL RESPONSE:", sl_resp)
+        print("SL RESP:", sl_resp)
 
         return jsonify({"status": "OK", "entry": entry_resp, "sl": sl_resp})
 
@@ -102,7 +99,7 @@ def webhook():
 
 @app.route("/")
 def home():
-    return "✅ Angel One Webhook (CNC default) Running"
+    return "✅ Angel One Webhook Running"
 
 
 if __name__ == "__main__":
